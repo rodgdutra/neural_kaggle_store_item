@@ -57,7 +57,7 @@ def batch_train(model, epoch, batch_size, train_loader, criterion, optimizer,
         output = model((src, tgt_in))
         loss = criterion(output, tgt_out)
         loss.backward()
-        scheduler.step()
+        optimizer.step()
 
         batch_loss += loss.item()
         total_loss += batch_loss
@@ -73,11 +73,5 @@ def batch_train(model, epoch, batch_size, train_loader, criterion, optimizer,
                                         cur_loss))
             batch_loss = 0
             start_time = time.time()
-        pred = output
-        predictions = torch.cat((predictions, pred), 0)
-        ground_truth = torch.cat((ground_truth, tgt_out), 0)
-
-    predictions = predictions.cpu().detach().numpy()
-    ground_truth = ground_truth.cpu().cpu().detach().numpy()
 
     return total_loss

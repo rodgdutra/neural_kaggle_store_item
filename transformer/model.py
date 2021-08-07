@@ -62,9 +62,10 @@ class TransformerTimeSeries(nn.Module):
                  encoder_vector_sz=1,
                  decoder_vector_sz=1,
                  num_layers=1,
+                 nhead=10,
                  n_time_steps=30,
-                 d_model=512,
-                 dropout=0.1):
+                 d_model=90,
+                 dropout=0.5):
         super(TransformerTimeSeries, self).__init__()
         self.model_type = 'Transformer'
         self.device = device
@@ -79,11 +80,11 @@ class TransformerTimeSeries(nn.Module):
         # Note that this implementation follows the data input format of
         # (batch, timestamps, features).
         self.encoder_layer = nn.TransformerEncoderLayer(d_model=d_model,
-                                                        nhead=2,
+                                                        nhead=nhead,
                                                         dropout=dropout,
                                                         batch_first=True)
         self.decoder_layer = nn.TransformerDecoderLayer(d_model=d_model,
-                                                        nhead=2,
+                                                        nhead=nhead,
                                                         dropout=dropout,
                                                         batch_first=True)
 
@@ -101,6 +102,7 @@ class TransformerTimeSeries(nn.Module):
         # as a time series predictor the pred_steps contain the estimation of future
         # behavior of one variable in time.
         self.linear = nn.Linear(d_model, 1)
+        self.out_fcn = nn.ReLU()
         self.init_weights()
 
     def _generate_square_subsequent_mask(self, sz):
@@ -131,8 +133,9 @@ class TransformerTimeSeries(nn.Module):
 
         src_start = self.encoder_projection(src)
         pos_encoded = self.pos_encoder(src)
-        src = pos_encoded + src_start
-        src = self.transformer_encoder(src) + src_start
+        src = pos_encoded
+        encoder_mask = self.mask.to(self.device)
+        src = self.transformer_encoder(src, mask=encoder_mask)
 
         return src
 
@@ -158,7 +161,6 @@ class TransformerTimeSeries(nn.Module):
         out = self.transformer_decoder(tgt=tgt,
                                        memory=memory,
                                        tgt_mask=decoder_mask)
-        out = self.linear(out)
 
         return out
 
@@ -172,11 +174,49 @@ class TransformerTimeSeries(nn.Module):
     def forward(self, x):
         """Send the information through the transformer network.
         """
-
         src, tgt = x
         src = self.encoder_process(src)
         out = self.decoder_process(tgt, src)
+        out = self.linear(out)
+        # out = self.out_fcn(out)
 
         # Reshapes the output to (batch, n_pred_steps)
         out = torch.reshape(out, (-1, out.shape[1]))
+
         return out
+
+    def encoder_attention(self, src):
+        """Return the attention matrix given an x input
+
+        Args:
+            src : Input tensor with shape (batch, timesteps, dmodel)
+        """
+        src_start = self.encoder_projection(src)
+        pos_encoded = self.pos_encoder(src)
+        src = pos_encoded + src_start
+        return self.encoder_layer.self_attn(src, src, src)
+
+    def decoder_attention(self, x):
+        """Return the attention matrix given an x input
+
+        Args:
+            x : Input tensor with shape (batch, timesteps, dmodel)
+        """
+        return self.decoder_layer.self_attn(x, x, x)
+
+
+def main():
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print('Using device:', device)
+    model = TransformerTimeSeries(device).to(device)
+    src = torch.rand(10, 30, 1).to(device)
+    tgt_in = torch.rand(10, 30, 1).to(device)
+
+    out = model((src, tgt_in))
+    print(f'output {out.shape}')
+
+    print(f" Attention matrix: {model.encoder_attention(src)}")
+
+
+if __name__ == '__main__':
+    main()
