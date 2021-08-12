@@ -1,6 +1,7 @@
 import torch
 import math
 from torch import nn
+from torch._C import device
 
 
 class PositionalEncoding(nn.Module):
@@ -10,8 +11,8 @@ class PositionalEncoding(nn.Module):
     encoding inserts the notion of position in the input features.
 
     Args:
-        d_model : size of entry feature array
-        max_len : Array of objects with simulation data
+        d_model : Hidden dimensionality of the input.
+        max_len : Maximum length of a sequence to expect
     """
     def __init__(self, d_model, max_len=5000):
         super(PositionalEncoding, self).__init__()
@@ -50,7 +51,10 @@ class TransformerTimeSeries(nn.Module):
                             number the encoder's input features.
         decoder_vector_sz : Size of the decoder input vector, which also define the
                             number the decoder's input features.
+        encoder_mask      : Either use or not a mask to avoid look ahead in the encoder.
+        decoder_mask      : Either use or not a mask to avoid look ahead in the decoder.
         num_layers        : Number of decoder and encoder layers.
+        nhead             : Number of parallel multi attention heads.
         n_time_steps      : Number of timesteps used as inputs in the encoder and
                             decoder.
         d_model           : Model's vector dimmension.
@@ -61,6 +65,8 @@ class TransformerTimeSeries(nn.Module):
                  device,
                  encoder_vector_sz=1,
                  decoder_vector_sz=1,
+                 encoder_mask=False,
+                 decoder_mask=False,
                  num_layers=1,
                  nhead=10,
                  n_time_steps=30,
@@ -69,9 +75,10 @@ class TransformerTimeSeries(nn.Module):
         super(TransformerTimeSeries, self).__init__()
         self.model_type = 'Transformer'
         self.device = device
+        self.n_time_steps = n_time_steps
+        self.encoder_mask = encoder_mask
+        self.decoder_mask = decoder_mask
 
-        # Mask to previne look ahead behavior in the decoder process
-        self.mask = self._generate_square_subsequent_mask(n_time_steps)
         # Positional encoding used in the decoder and encoder
         self.pos_encoder = PositionalEncoding(d_model)
         self.pos_decoder = PositionalEncoding(d_model)
@@ -130,14 +137,20 @@ class TransformerTimeSeries(nn.Module):
             src: Input data of  the encoder, with shape
                  (batch, n_time_steps, encoder_vector_sz)
         """
+        x = src
+        x = self.encoder_projection(x)
+        x = self.pos_encoder(x)
 
-        src_start = self.encoder_projection(src)
-        pos_encoded = self.pos_encoder(src)
-        src = pos_encoded
-        encoder_mask = self.mask.to(self.device)
-        src = self.transformer_encoder(src, mask=encoder_mask)
+        if self.encoder_mask:
+            # Mask to avoid look ahead behavior in the encoder process
+            mask = self._generate_square_subsequent_mask(self.n_time_steps).to(
+                self.device)
+        else:
+            mask = None
 
-        return src
+        x = self.transformer_encoder(x, mask=mask)
+
+        return x
 
     def decoder_process(self, tgt, memory):
         """Decoder process of the Transformer network.
@@ -148,19 +161,23 @@ class TransformerTimeSeries(nn.Module):
 
 
         Args:
-            tgt    : Decoder input, which is previous values of the target
-                     features, and depending on the way used to process information
-                     this can also be previous outputs of the transformer network.
+            tgt : Decoder input, which is previous values of the target
+                  features, and depending on the way used to process information
+                  this can also be previous outputs of the transformer network.
 
             memory : Memory, that is the encoder representation of its input.
         """
-        tgt_start = self.decoder_projection(tgt)
-        pos_decoder = self.pos_decoder(tgt)
-        tgt = pos_decoder + tgt_start
-        decoder_mask = self.mask.to(self.device)
-        out = self.transformer_decoder(tgt=tgt,
-                                       memory=memory,
-                                       tgt_mask=decoder_mask)
+        x = tgt
+        x = self.decoder_projection(tgt)
+        x = self.pos_decoder(x)
+
+        if self.decoder_mask:
+            # Mask to avoid look ahead behavior in the decoder process
+            mask = self._generate_square_subsequent_mask(tgt.shape[1]).to(
+                self.device)
+        else:
+            mask = None
+        out = self.transformer_decoder(tgt=x, memory=memory, tgt_mask=mask)
 
         return out
 
@@ -178,7 +195,6 @@ class TransformerTimeSeries(nn.Module):
         src = self.encoder_process(src)
         out = self.decoder_process(tgt, src)
         out = self.linear(out)
-        # out = self.out_fcn(out)
 
         # Reshapes the output to (batch, n_pred_steps)
         out = torch.reshape(out, (-1, out.shape[1]))
@@ -191,10 +207,17 @@ class TransformerTimeSeries(nn.Module):
         Args:
             src : Input tensor with shape (batch, timesteps, dmodel)
         """
-        src_start = self.encoder_projection(src)
-        pos_encoded = self.pos_encoder(src)
-        src = pos_encoded + src_start
-        return self.encoder_layer.self_attn(src, src, src)
+        x = src
+        x = self.encoder_projection(x)
+        x = self.pos_encoder(x)
+
+        if self.encoder_mask:
+            # Mask to avoid look ahead behavior in the decoder process
+            mask = self._generate_square_subsequent_mask(src.shape[1]).to(
+                self.device)
+        else:
+            mask = None
+        return self.encoder_layer.self_attn(x, x, x, attn_mask=mask)
 
     def decoder_attention(self, x):
         """Return the attention matrix given an x input
@@ -209,7 +232,7 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print('Using device:', device)
     model = TransformerTimeSeries(device).to(device)
-    src = torch.rand(10, 30, 1).to(device)
+    src = torch.rand(10, 40, 1).to(device)
     tgt_in = torch.rand(10, 30, 1).to(device)
 
     out = model((src, tgt_in))

@@ -35,6 +35,37 @@ class TransformerSet(Dataset):
         return self.encoder_input[idx], self.decoder_input[
             idx], self.true_target[idx]
 
+class TransformerIterativeSet(Dataset):
+    """Transformer dataset object
+
+   This dataset object ensures that the transformer network is
+   feed correctly and also saves the true targets values for
+   posterior evaluation.
+
+    Args:
+        x_matrix : Matrix containing the past steps of a univariate
+                   time series. With shape (time_steps, window_of_features)
+
+        y_matrix : Matrix containing the future steps of a univariate time series.
+                   With shape (time_steps, window_of_features)
+
+        n_time_steps: Number of timesteps used in the entry of the transformer.
+    """
+    def __init__(self, x_encoder, x_decoder, y_matrix, n_time_steps):
+
+        x_encoder = x_encoder.reshape(-1, n_time_steps, 1)
+        x_decoder = x_decoder.reshape(-1, n_time_steps, 1)
+        self.encoder_input = x_encoder
+        self.decoder_input = x_decoder
+        self.true_target = y_matrix
+
+    def __len__(self):
+        return len(self.encoder_input)
+
+    def __getitem__(self, idx):
+        return self.encoder_input[idx], self.decoder_input[
+            idx], self.true_target[idx]
+
 
 def batch_train(model, epoch, batch_size, train_loader, criterion, optimizer,
                 scheduler, set_size, device):
