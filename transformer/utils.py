@@ -20,20 +20,33 @@ class TransformerSet(Dataset):
 
         n_time_steps: Number of timesteps used in the entry of the transformer.
     """
-    def __init__(self, x_matrix, y_matrix, n_time_steps):
-
+    def __init__(self,
+                 x_matrix,
+                 y_matrix,
+                 n_time_steps,
+                 encoder_feedback=False):
+        self.encoder_feedback = encoder_feedback
         x_matrix = x_matrix.reshape(-1, n_time_steps, 1)
-        n_encoder_input_steps = n_time_steps // 2
-        self.encoder_input = x_matrix[:, :n_encoder_input_steps]
-        self.decoder_input = x_matrix[:, n_encoder_input_steps:]
+
+        if encoder_feedback:
+            self.encoder_input = x_matrix
+
+        else:
+            n_encoder_input_steps = n_time_steps // 2
+            self.encoder_input = x_matrix[:, :n_encoder_input_steps]
+            self.decoder_input = x_matrix[:, n_encoder_input_steps:]
         self.true_target = y_matrix
 
     def __len__(self):
         return len(self.encoder_input)
 
     def __getitem__(self, idx):
-        return self.encoder_input[idx], self.decoder_input[
-            idx], self.true_target[idx]
+        if self.encoder_feedback:
+            return self.encoder_input[idx], self.true_target[idx]
+        else:
+            return self.encoder_input[idx], self.decoder_input[
+                idx], self.true_target[idx]
+
 
 class TransformerIterativeSet(Dataset):
     """Transformer dataset object
@@ -67,8 +80,16 @@ class TransformerIterativeSet(Dataset):
             idx], self.true_target[idx]
 
 
-def batch_train(model, epoch, batch_size, train_loader, criterion, optimizer,
-                scheduler, set_size, device):
+def batch_train(model,
+                epoch,
+                batch_size,
+                train_loader,
+                criterion,
+                optimizer,
+                scheduler,
+                set_size,
+                device,
+                encoder_feedback=False):
     """Train the model in batch
     """
     model.train()  # Turn on the train mode
@@ -79,13 +100,22 @@ def batch_train(model, epoch, batch_size, train_loader, criterion, optimizer,
     ground_truth = torch.tensor([]).to(device)
 
     for i, batch in enumerate(train_loader):
-        src, tgt_in, tgt_out = batch[0], batch[1], batch[2]
-        src = Variable(torch.Tensor(src.float())).to(device)
-        tgt_in = Variable(torch.Tensor(tgt_in.float())).to(device)
-        tgt_out = Variable(torch.Tensor(tgt_out.float())).to(device)
+        if encoder_feedback:
+            src, tgt_out = batch[0], batch[1]
+            src = Variable(torch.Tensor(src.float())).to(device)
+            tgt_out = Variable(torch.Tensor(tgt_out.float())).to(device)
+        else:
+            src, tgt_in, tgt_out = batch[0], batch[1], batch[2]
+            src = Variable(torch.Tensor(src.float())).to(device)
+            tgt_in = Variable(torch.Tensor(tgt_in.float())).to(device)
+            tgt_out = Variable(torch.Tensor(tgt_out.float())).to(device)
 
         optimizer.zero_grad()
-        output = model((src, tgt_in))
+        if encoder_feedback:
+            output = model(src)
+        else:
+            output = model((src, tgt_in))
+
         loss = criterion(output, tgt_out)
         loss.backward()
         optimizer.step()
