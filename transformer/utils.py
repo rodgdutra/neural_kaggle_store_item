@@ -64,10 +64,11 @@ class TransformerIterativeSet(Dataset):
 
         n_time_steps: Number of timesteps used in the entry of the transformer.
     """
-    def __init__(self, x_encoder, x_decoder, y_matrix, n_time_steps):
+    def __init__(self, x_encoder, x_decoder, y_matrix, n_encoder_time_steps,
+                 n_decoder_time_steps):
 
-        x_encoder = x_encoder.reshape(-1, n_time_steps, 1)
-        x_decoder = x_decoder.reshape(-1, n_time_steps, 1)
+        x_encoder = x_encoder.reshape(-1, n_encoder_time_steps, 1)
+        x_decoder = x_decoder.reshape(-1, n_decoder_time_steps, 1)
         self.encoder_input = x_encoder
         self.decoder_input = x_decoder
         self.true_target = y_matrix
