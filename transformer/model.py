@@ -254,7 +254,26 @@ class TransformerTimeSeries(nn.Module):
         Args:
             x : Input tensor with shape (batch, timesteps, dmodel)
         """
-        return self.decoder_layer.self_attn(x, x, x)
+        if self.encoder_feedback:
+            src = x
+        else:
+            src, tgt = x
+
+        src = self.encoder_process(src)
+
+        if self.encoder_feedback:
+            # If the feedbeck is on pass the encoder output as the
+            # decoder input sequence
+            tgt = self.pos_decoder(src)
+
+        x = tgt
+        x = self.decoder_projection(tgt)
+        x = self.pos_decoder(x)
+
+        mask = self._generate_square_subsequent_mask(
+            self.n_output_time_steps).to(self.device)
+
+        return self.decoder_layer.self_attn(x, x, x, attn_mask=mask)
 
 
 def main():
