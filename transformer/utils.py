@@ -90,7 +90,8 @@ def batch_train(model,
                 scheduler,
                 set_size,
                 device,
-                encoder_feedback=False):
+                encoder_feedback=False,
+                informer_pred_sz=None):
     """Train the model in batch
     """
     model.train()  # Turn on the train mode
@@ -117,6 +118,9 @@ def batch_train(model,
         else:
             output = model((src, tgt_in))
 
+        if informer_pred_sz is not None:
+            output = output[:, -informer_pred_sz:]
+            tgt_out = tgt_out[:, -informer_pred_sz:]
         loss = criterion(output, tgt_out)
         loss.backward()
         optimizer.step()
@@ -135,5 +139,37 @@ def batch_train(model,
                                         cur_loss))
             batch_loss = 0
             start_time = time.time()
+
+    return total_loss
+
+
+def batch_val(model,
+              val_loader,
+              criterion,
+              device,
+              encoder_feedback=False,
+              informer_pred_sz=None):
+    model.eval()
+    batch_loss = 0.
+    total_loss = 0.
+    for batch in val_loader:
+        if encoder_feedback:
+            src, tgt_out = batch[0], batch[1]
+            src = Variable(torch.Tensor(src.float())).to(device)
+            tgt_out = Variable(torch.Tensor(tgt_out.float())).to(device)
+            output = model(src)
+        else:
+            src, tgt_in, tgt_out = batch[0], batch[1], batch[2]
+            src = Variable(torch.Tensor(src.float())).to(device)
+            tgt_in = Variable(torch.Tensor(tgt_in.float())).to(device)
+            tgt_out = Variable(torch.Tensor(tgt_out.float())).to(device)
+            output = model((src, tgt_in))
+
+        if informer_pred_sz is not None:
+            output = output[:, -informer_pred_sz:]
+            tgt_out = tgt_out[:, -informer_pred_sz:]
+        loss = criterion(output, tgt_out)
+        batch_loss += loss.item()
+        total_loss += batch_loss
 
     return total_loss
