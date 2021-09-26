@@ -48,7 +48,7 @@ class TransformerSet(Dataset):
                 idx], self.true_target[idx]
 
 
-class TransformerIterativeSet(Dataset):
+class TransformerTimeSet(Dataset):
     """Transformer dataset object
 
    This dataset object ensures that the transformer network is
