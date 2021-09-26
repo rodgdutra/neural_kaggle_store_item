@@ -56,13 +56,20 @@ class TransformerIterativeSet(Dataset):
    posterior evaluation.
 
     Args:
-        x_matrix : Matrix containing the past steps of a univariate
+        x_encoder : Matrix containing the past steps of a univariate
+                   time series. With shape (time_steps, window_of_features)
+
+        x_decoder : Matrix containing the past steps of a univariate
                    time series. With shape (time_steps, window_of_features)
 
         y_matrix : Matrix containing the future steps of a univariate time series.
                    With shape (time_steps, window_of_features)
 
-        n_time_steps: Number of timesteps used in the entry of the transformer.
+        n_encoder_time_steps: Number of timesteps used in the encoder of the transformer.
+
+        n_decoder_time_steps: Number of timesteps used in the decoder of the transformer.
+
+        pred_size: Size of prediction in the tail of the y_matrix
     """
     def __init__(self, x_encoder, x_decoder, y_matrix, n_encoder_time_steps,
                  n_decoder_time_steps):
