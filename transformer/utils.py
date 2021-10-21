@@ -105,8 +105,6 @@ def batch_train(model,
     batch_loss = 0.
     total_loss = 0.
     start_time = time.time()
-    predictions = torch.tensor([]).to(device)
-    ground_truth = torch.tensor([]).to(device)
 
     for i, batch in enumerate(train_loader):
         if encoder_feedback:
