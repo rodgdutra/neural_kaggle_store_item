@@ -68,12 +68,13 @@ class TransformerTimeSeries(nn.Module):
                  encoder_mask=False,
                  decoder_mask=False,
                  encoder_feedback=False,
-                 num_layers=1,
+                 n_enc_layers=1,
+                 n_dec_layers=1,
                  nhead=10,
                  n_encoder_time_steps=30,
                  n_output_time_steps=30,
                  output_vector_sz=1,
-                 d_model=90,
+                 d_model=100,
                  encoder_only=False,
                  dropout=0.5):
         super(TransformerTimeSeries, self).__init__()
@@ -98,8 +99,8 @@ class TransformerTimeSeries(nn.Module):
                                                         nhead=nhead,
                                                         dropout=dropout,
                                                         batch_first=True)
-        self.transformer_encoder = nn.TransformerEncoder(self.encoder_layer,
-                                                         num_layers=num_layers)
+        self.transformer_encoder = nn.TransformerEncoder(
+            self.encoder_layer, num_layers=n_enc_layers)
         # Encoder input projection
         self.encoder_projection = nn.Linear(encoder_vector_sz, d_model)
 
@@ -113,7 +114,7 @@ class TransformerTimeSeries(nn.Module):
                                                             batch_first=True)
 
             self.transformer_decoder = nn.TransformerDecoder(
-                self.decoder_layer, num_layers=num_layers)
+                self.decoder_layer, num_layers=n_dec_layers)
 
             # Decoder input projectors
             if encoder_feedback:
@@ -135,7 +136,7 @@ class TransformerTimeSeries(nn.Module):
         This mask prevents the look ahead behavior in the decoder process.
 
         Args:
-            sz : Size of decoder mask.
+            sz : Size of timestep matrix mask.
         """
         mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
         mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(
@@ -224,7 +225,6 @@ class TransformerTimeSeries(nn.Module):
                 tgt = self.pos_decoder(src)
             out = self.decoder_process(tgt, src)
             out = self.linear(out)
-
         # Reshapes the output to (batch, n_pred_steps)
         out = torch.reshape(out, (-1, out.shape[1]))
 
@@ -270,9 +270,11 @@ class TransformerTimeSeries(nn.Module):
         x = self.decoder_projection(tgt)
         x = self.pos_decoder(x)
 
-        mask = self._generate_square_subsequent_mask(
-            self.n_output_time_steps).to(self.device)
-
+        if self.decoder_mask:
+            mask = self._generate_square_subsequent_mask(
+                self.n_output_time_steps).to(self.device)
+        else:
+            mask = None
         return self.decoder_layer.self_attn(x, x, x, attn_mask=mask)
 
 
