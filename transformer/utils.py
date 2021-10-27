@@ -20,15 +20,11 @@ class TransformerSet(Dataset):
 
         n_time_steps: Number of timesteps used in the entry of the transformer.
     """
-    def __init__(self,
-                 x_matrix,
-                 y_matrix,
-                 n_time_steps,
-                 encoder_feedback=False):
-        self.encoder_feedback = encoder_feedback
+    def __init__(self, x_matrix, y_matrix, n_time_steps, encoder_only=False):
+        self.encoder_only = encoder_only
         x_matrix = x_matrix.reshape(-1, n_time_steps, 1)
 
-        if encoder_feedback:
+        if encoder_only:
             self.encoder_input = x_matrix
 
         else:
@@ -41,7 +37,7 @@ class TransformerSet(Dataset):
         return len(self.encoder_input)
 
     def __getitem__(self, idx):
-        if self.encoder_feedback:
+        if self.encoder_only:
             return self.encoder_input[idx], self.true_target[idx]
         else:
             return self.encoder_input[idx], self.decoder_input[
@@ -97,7 +93,7 @@ def batch_train(model,
                 scheduler,
                 set_size,
                 device,
-                encoder_feedback=False,
+                encoder_only=False,
                 informer_pred_sz=None):
     """Train the model in batch
     """
@@ -107,7 +103,7 @@ def batch_train(model,
     start_time = time.time()
 
     for i, batch in enumerate(train_loader):
-        if encoder_feedback:
+        if encoder_only:
             src, tgt_out = batch[0], batch[1]
             src = Variable(torch.Tensor(src.float())).to(device)
             tgt_out = Variable(torch.Tensor(tgt_out.float())).to(device)
@@ -118,7 +114,7 @@ def batch_train(model,
             tgt_out = Variable(torch.Tensor(tgt_out.float())).to(device)
 
         optimizer.zero_grad()
-        if encoder_feedback:
+        if encoder_only:
             output = model(src)
         else:
             output = model((src, tgt_in))
@@ -126,6 +122,7 @@ def batch_train(model,
         if informer_pred_sz is not None:
             output = output[:, -informer_pred_sz:]
             tgt_out = tgt_out[:, -informer_pred_sz:]
+
         loss = criterion(output, tgt_out)
         loss.backward()
         optimizer.step()
@@ -152,13 +149,13 @@ def batch_val(model,
               val_loader,
               criterion,
               device,
-              encoder_feedback=False,
+              encoder_only=False,
               informer_pred_sz=None):
     model.eval()
     batch_loss = 0.
     total_loss = 0.
     for batch in val_loader:
-        if encoder_feedback:
+        if encoder_only:
             src, tgt_out = batch[0], batch[1]
             src = Variable(torch.Tensor(src.float())).to(device)
             tgt_out = Variable(torch.Tensor(tgt_out.float())).to(device)

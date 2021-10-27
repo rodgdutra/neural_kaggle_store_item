@@ -76,11 +76,13 @@ class TransformerTimeSeries(nn.Module):
                  output_vector_sz=1,
                  d_model=100,
                  encoder_only=False,
-                 dropout=0.5):
+                 dropout=0.5,
+                 n_input_time_steps=1,
+                 iterative=True):
+
         super(TransformerTimeSeries, self).__init__()
         self.model_type = 'Transformer'
         self.device = device
-        self.n_encoder_time_steps = n_encoder_time_steps
         self.encoder_mask = encoder_mask
         self.decoder_mask = decoder_mask
         self.encoder_only = encoder_only
@@ -88,7 +90,8 @@ class TransformerTimeSeries(nn.Module):
         self.n_encoder_time_steps = n_encoder_time_steps
         self.n_output_time_steps = n_output_time_steps
         self.output_vector_sz = output_vector_sz
-
+        self.n_input_time_steps = n_input_time_steps
+        self.iterative = iterative
         # Positional encoding used in the decoder and encoder
         self.pos_encoder = PositionalEncoding(d_model)
 
@@ -126,21 +129,34 @@ class TransformerTimeSeries(nn.Module):
         # Note that the output format of this model is (batch, pred_steps), where
         # as a time series predictor the pred_steps contain the estimation of future
         # behavior of one variable in time.
-        self.linear = nn.Linear(d_model, self.output_vector_sz)
+        self.linear = nn.Linear(d_model, self.output_vector_sz, bias=True)
         self.out_fcn = nn.ReLU()
         self.init_weights()
 
-    def _generate_square_subsequent_mask(self, sz):
+    def _generate_square_subsequent_mask(self, sz, in_sz, iterative=True):
         """Generates decoder mask
 
-        This mask prevents the look ahead behavior in the decoder process.
+        This mask prevents the look ahead behavior in the decoder or encoder
+        process.
 
         Args:
             sz : Size of timestep matrix mask.
         """
-        mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
-        mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(
-            mask == 1, float(0.0))
+        # Provides mask for multi-step iterative scenarios
+        if iterative:
+            mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
+            mask = mask.float().masked_fill(mask == 0,
+                                            float('-inf')).masked_fill(
+                                                mask == 1, float(0.0))
+
+        # Provides mask for the multi-step direct scenarios
+        else:
+            mask = torch.zeros((sz, sz))
+            mask[in_sz:, in_sz:] = 1
+            mask = mask.float().masked_fill(mask == 1,
+                                            float('-inf')).masked_fill(
+                                                mask == 0, float(0.0))
+
         return mask
 
     def encoder_process(self, src):
@@ -162,7 +178,9 @@ class TransformerTimeSeries(nn.Module):
         if self.encoder_mask:
             # Mask to avoid look ahead behavior in the encoder process
             mask = self._generate_square_subsequent_mask(
-                self.n_encoder_time_steps).to(self.device)
+                self.n_encoder_time_steps,
+                self.n_input_time_steps,
+                iterative=self.iterative).to(self.device)
         else:
             mask = None
 
@@ -192,7 +210,9 @@ class TransformerTimeSeries(nn.Module):
         if self.decoder_mask:
             # Mask to avoid look ahead behavior in the decoder process
             mask = self._generate_square_subsequent_mask(
-                self.n_output_time_steps).to(self.device)
+                self.n_output_time_steps,
+                self.n_input_time_steps,
+                iterative=self.iterative).to(self.device)
         else:
             mask = None
         out = self.transformer_decoder(tgt=x, memory=memory, tgt_mask=mask)
@@ -209,15 +229,18 @@ class TransformerTimeSeries(nn.Module):
     def forward(self, x):
         """Send the information through the transformer network.
         """
-        if self.encoder_feedback:
+        if self.encoder_feedback or self.encoder_only:
             src = x
+
         else:
             src, tgt = x
 
         src = self.encoder_process(src)
         if self.encoder_only:
+
             out = self.linear(src)
-            out = self.out_fcn(out)
+            # out = self.out_fcn(out)
+
         else:
             if self.encoder_feedback:
                 # If the feedbeck is on pass the encoder output as the
@@ -230,7 +253,7 @@ class TransformerTimeSeries(nn.Module):
 
         return out
 
-    def encoder_attention(self, src):
+    def encoder_attention(self, src, layer_idx=0):
         """Return the attention matrix given an x input
 
         Args:
@@ -242,13 +265,16 @@ class TransformerTimeSeries(nn.Module):
 
         if self.encoder_mask:
             # Mask to avoid look ahead behavior in the decoder process
-            mask = self._generate_square_subsequent_mask(src.shape[1]).to(
-                self.device)
+            mask = self._generate_square_subsequent_mask(
+                src.shape[1],
+                self.n_input_time_steps,
+                iterative=self.iterative).to(self.device)
         else:
             mask = None
-        return self.encoder_layer.self_attn(x, x, x, attn_mask=mask)
+        return self.transformer_encoder.layers[layer_idx].self_attn(
+            x, x, x, attn_mask=mask)
 
-    def decoder_attention(self, x):
+    def decoder_attention(self, x, layer_idx=0):
         """Return the attention matrix given an x input
 
         Args:
@@ -259,6 +285,7 @@ class TransformerTimeSeries(nn.Module):
         else:
             src, tgt = x
 
+        # Process the memory of the decoder layer
         src = self.encoder_process(src)
 
         if self.encoder_feedback:
@@ -266,16 +293,30 @@ class TransformerTimeSeries(nn.Module):
             # decoder input sequence
             tgt = self.pos_decoder(src)
 
-        x = tgt
-        x = self.decoder_projection(tgt)
-        x = self.pos_decoder(x)
+        # Decoder input process
+        tgt = self.decoder_projection(tgt)
+        tgt = self.pos_decoder(tgt)
 
         if self.decoder_mask:
             mask = self._generate_square_subsequent_mask(
-                self.n_output_time_steps).to(self.device)
+                tgt.shape[1], self.n_output_time_steps).to(self.device)
         else:
             mask = None
-        return self.decoder_layer.self_attn(x, x, x, attn_mask=mask)
+
+        # Get the self and the multi_head attention from the selected
+        # decoder layer
+        self_attn = self.transformer_decoder.layers[layer_idx].self_attn(
+            tgt, tgt, tgt, attn_mask=mask)
+
+        # Decoder process before the Multi head attention
+        tgt = tgt + self.transformer_decoder.layers[layer_idx].dropout1(
+            self_attn[0])
+        tgt = self.transformer_decoder.layers[layer_idx].norm1(tgt)
+
+        src_tgt_attn = self.transformer_decoder.layers[
+            layer_idx].multihead_attn(tgt, src, src)
+
+        return self_attn, src_tgt_attn
 
 
 def main():
