@@ -14,6 +14,7 @@ class PositionalEncoding(nn.Module):
         d_model : Hidden dimensionality of the input.
         max_len : Maximum length of a sequence to expect
     """
+
     def __init__(self, d_model, max_len=5000):
         super(PositionalEncoding, self).__init__()
         pe = torch.zeros(max_len, d_model)
@@ -61,6 +62,7 @@ class TransformerTimeSeries(nn.Module):
         max_len : Array of objects with simulation data
 
     """
+
     def __init__(self,
                  device,
                  encoder_vector_sz=1,
@@ -77,7 +79,7 @@ class TransformerTimeSeries(nn.Module):
                  d_model=100,
                  encoder_only=False,
                  dropout=0.5,
-                 n_input_time_steps=1,
+                 n_input_time_steps=30,
                  iterative=True):
 
         super(TransformerTimeSeries, self).__init__()
@@ -100,8 +102,7 @@ class TransformerTimeSeries(nn.Module):
         # (batch, timestamps, features).
         self.encoder_layer = nn.TransformerEncoderLayer(d_model=d_model,
                                                         nhead=nhead,
-                                                        dropout=dropout,
-                                                        batch_first=True)
+                                                        dropout=dropout)
         self.transformer_encoder = nn.TransformerEncoder(
             self.encoder_layer, num_layers=n_enc_layers)
         # Encoder input projection
@@ -113,8 +114,7 @@ class TransformerTimeSeries(nn.Module):
 
             self.decoder_layer = nn.TransformerDecoderLayer(d_model=d_model,
                                                             nhead=nhead,
-                                                            dropout=dropout,
-                                                            batch_first=True)
+                                                            dropout=dropout,)
 
             self.transformer_decoder = nn.TransformerDecoder(
                 self.decoder_layer, num_layers=n_dec_layers)
@@ -152,7 +152,9 @@ class TransformerTimeSeries(nn.Module):
         # Provides mask for the multi-step direct scenarios
         else:
             mask = torch.zeros((sz, sz))
-            mask[in_sz:, in_sz:] = 1
+            mask[:, in_sz:] = 1
+            # mask[in_sz:] = 1
+
             mask = mask.float().masked_fill(mask == 1,
                                             float('-inf')).masked_fill(
                                                 mask == 0, float(0.0))
@@ -171,8 +173,10 @@ class TransformerTimeSeries(nn.Module):
             src: Input data of  the encoder, with shape
                  (batch, n_time_steps, encoder_vector_sz)
         """
+
         x = src
         x = self.encoder_projection(x)
+        x = x.permute(1, 0, 2)
         x = self.pos_encoder(x)
 
         if self.encoder_mask:
@@ -185,6 +189,7 @@ class TransformerTimeSeries(nn.Module):
             mask = None
 
         x = self.transformer_encoder(x, mask=mask)
+        x = x.permute(1, 0, 2)
 
         return x
 
@@ -205,6 +210,9 @@ class TransformerTimeSeries(nn.Module):
         """
         x = tgt
         x = self.decoder_projection(tgt)
+        x = x.permute(1, 0, 2)
+        memory = memory.permute(1, 0, 2)
+
         x = self.pos_decoder(x)
 
         if self.decoder_mask:
@@ -216,7 +224,7 @@ class TransformerTimeSeries(nn.Module):
         else:
             mask = None
         out = self.transformer_decoder(tgt=x, memory=memory, tgt_mask=mask)
-
+        out = out.permute(1, 0, 2)
         return out
 
     def init_weights(self):
@@ -261,6 +269,7 @@ class TransformerTimeSeries(nn.Module):
         """
         x = src
         x = self.encoder_projection(x)
+        x = x.permute(1, 0, 2)
         x = self.pos_encoder(x)
 
         if self.encoder_mask:
@@ -287,6 +296,7 @@ class TransformerTimeSeries(nn.Module):
 
         # Process the memory of the decoder layer
         src = self.encoder_process(src)
+        src = src.permute(1, 0, 2)
 
         if self.encoder_feedback:
             # If the feedbeck is on pass the encoder output as the
@@ -295,11 +305,12 @@ class TransformerTimeSeries(nn.Module):
 
         # Decoder input process
         tgt = self.decoder_projection(tgt)
+        tgt = tgt.permute(1, 0, 2)
         tgt = self.pos_decoder(tgt)
 
         if self.decoder_mask:
             mask = self._generate_square_subsequent_mask(
-                tgt.shape[1], self.n_output_time_steps).to(self.device)
+                tgt.shape[0], self.n_output_time_steps).to(self.device)
         else:
             mask = None
 
@@ -325,14 +336,19 @@ def main():
     model = TransformerTimeSeries(device,
                                   n_encoder_time_steps=30,
                                   n_output_time_steps=30,
-                                  encoder_feedback=True).to(device)
+                                  encoder_feedback=False,
+                                  encoder_only=False,
+                                  encoder_mask=False,
+                                  decoder_mask=True,
+                                  iterative=False).to(device)
     src = torch.rand(10, 30, 1).to(device)
     tgt_in = torch.rand(10, 30, 1).to(device)
 
-    out = model(src)
-    print(f'output {out.shape}')
+    # out = model((src, tgt_in))
+    # print(f'output {out.shape}')
 
-    print(f" Attention matrix: {model.encoder_attention(src)}")
+    # print(f" Attention matrix: {model.encoder_attention(src)}")
+    model.decoder_attention((src, tgt_in))
 
 
 if __name__ == '__main__':
