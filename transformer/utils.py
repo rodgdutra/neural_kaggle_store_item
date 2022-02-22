@@ -20,6 +20,7 @@ class TransformerSet(Dataset):
 
         n_time_steps: Number of timesteps used in the entry of the transformer.
     """
+
     def __init__(self, x_matrix, y_matrix, n_time_steps, encoder_only=False):
         self.encoder_only = encoder_only
         x_matrix = x_matrix.reshape(-1, n_time_steps, 1)
@@ -67,6 +68,7 @@ class TransformerTimeSet(Dataset):
 
         pred_size: Size of prediction in the tail of the y_matrix
     """
+
     def __init__(self, x_encoder, x_decoder, y_matrix, n_encoder_time_steps,
                  n_decoder_time_steps):
 
@@ -105,8 +107,10 @@ def batch_train(model,
     for i, batch in enumerate(train_loader):
         if encoder_only:
             src, tgt_out = batch[0], batch[1]
-            src = Variable(torch.Tensor(src.float())).to(device)
-            tgt_out = Variable(torch.Tensor(tgt_out.float())).to(device)
+            src = src.to(torch.float32)
+            src = src.to(device)
+            tgt_out = tgt_out.to(torch.float32)
+            tgt_out = tgt_out.to(device)
         else:
             src, tgt_in, tgt_out = batch[0], batch[1], batch[2]
             src = Variable(torch.Tensor(src.float())).to(device)

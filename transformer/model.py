@@ -2,34 +2,14 @@ import torch
 import math
 from torch import nn
 from torch._C import device
-
-
-class PositionalEncoding(nn.Module):
-    """Vanilla PositionalEncoding encoding
-
-    According to the Attention is all you need paper, this positional
-    encoding inserts the notion of position in the input features.
-
-    Args:
-        d_model : Hidden dimensionality of the input.
-        max_len : Maximum length of a sequence to expect
-    """
-
-    def __init__(self, d_model, max_len=5000):
-        super(PositionalEncoding, self).__init__()
-        pe = torch.zeros(max_len, d_model)
-        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-        div_term = torch.exp(
-            torch.arange(0, d_model, 2).float() *
-            (-math.log(10000.0) / d_model))
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
-        pe = pe.unsqueeze(0).transpose(0, 1)
-
-        self.register_buffer('pe', pe)
-
-    def forward(self, x):
-        return x + self.pe[:x.size(0), :]
+try:
+    from transformer.components.layers import Decoder, DecoderLayer, Encoder, EncoderLayer, ConvLayer
+    from transformer.components.selfattention import FullAttention, AttentionLayer
+    from transformer.components.encoding import PositionalEncoding
+except:
+    from components.layers import Decoder, DecoderLayer, Encoder, EncoderLayer, ConvLayer
+    from components.selfattention import FullAttention, AttentionLayer
+    from components.encoding import PositionalEncoding
 
 
 class TransformerTimeSeries(nn.Module):
@@ -100,11 +80,32 @@ class TransformerTimeSeries(nn.Module):
         # Encoder and encoder layers
         # Note that this implementation follows the data input format of
         # (batch, timestamps, features).
-        self.encoder_layer = nn.TransformerEncoderLayer(d_model=d_model,
-                                                        nhead=nhead,
-                                                        dropout=dropout)
-        self.transformer_encoder = nn.TransformerEncoder(
-            self.encoder_layer, num_layers=n_enc_layers)
+
+        factor = 5
+        activation = 'relu'
+        output_attention = True
+        d_ff = 2048
+        # self.encoder_layer = nn.TransformerEncoderLayer(d_model=d_model,
+        #                                                 nhead=nhead,
+        #                                                 dropout=dropout)
+        # self.transformer_encoder = nn.TransformerEncoder(
+        #     self.encoder_layer, num_layers=n_enc_layers)
+
+        self.transformer_encoder = Encoder(
+            [
+                EncoderLayer(
+                    AttentionLayer(
+                        FullAttention(False, factor, attention_dropout=dropout,
+                                      output_attention=output_attention), d_model, nhead),
+                    d_model,
+                    d_ff,
+                    dropout=dropout,
+                    activation=activation
+                ) for l in range(n_enc_layers)
+            ],
+            norm_layer=torch.nn.LayerNorm(d_model)
+        )
+
         # Encoder input projection
         self.encoder_projection = nn.Linear(encoder_vector_sz, d_model)
 
@@ -161,7 +162,7 @@ class TransformerTimeSeries(nn.Module):
 
         return mask
 
-    def encoder_process(self, src):
+    def encoder_process(self, src, output_attention=False):
         """Encoder process of the Transformer network.
 
         According to [1], the tranformer encoder produces an encoded version
@@ -178,6 +179,7 @@ class TransformerTimeSeries(nn.Module):
         x = self.encoder_projection(x)
         x = x.permute(1, 0, 2)
         x = self.pos_encoder(x)
+        x = x.permute(1, 0, 2)
 
         if self.encoder_mask:
             # Mask to avoid look ahead behavior in the encoder process
@@ -188,10 +190,12 @@ class TransformerTimeSeries(nn.Module):
         else:
             mask = None
 
-        x = self.transformer_encoder(x, mask=mask)
-        x = x.permute(1, 0, 2)
-
-        return x
+        x, attn = self.transformer_encoder(x, attn_mask=mask)
+        # x = x.permute(1, 0, 2)
+        if output_attention:
+            return x, attn
+        else:
+            return x
 
     def decoder_process(self, tgt, memory):
         """Decoder process of the Transformer network.
@@ -265,23 +269,11 @@ class TransformerTimeSeries(nn.Module):
         """Return the attention matrix given an x input
 
         Args:
-            src : Input tensor with shape (batch, timesteps, dmodel)
+            src : Input tensor with shape (batch, timesteps, entry_feat_dim)
         """
-        x = src
-        x = self.encoder_projection(x)
-        x = x.permute(1, 0, 2)
-        x = self.pos_encoder(x)
+        _, attn = self.encoder_process(src, output_attention=True)
 
-        if self.encoder_mask:
-            # Mask to avoid look ahead behavior in the decoder process
-            mask = self._generate_square_subsequent_mask(
-                src.shape[1],
-                self.n_input_time_steps,
-                iterative=self.iterative).to(self.device)
-        else:
-            mask = None
-        return self.transformer_encoder.layers[layer_idx].self_attn(
-            x, x, x, attn_mask=mask)
+        return attn
 
     def decoder_attention(self, x, layer_idx=0):
         """Return the attention matrix given an x input
@@ -331,24 +323,24 @@ class TransformerTimeSeries(nn.Module):
 
 
 def main():
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cpu')
     print('Using device:', device)
     model = TransformerTimeSeries(device,
                                   n_encoder_time_steps=30,
                                   n_output_time_steps=30,
                                   encoder_feedback=False,
-                                  encoder_only=False,
+                                  encoder_only=True,
                                   encoder_mask=False,
                                   decoder_mask=True,
                                   iterative=False).to(device)
-    src = torch.rand(10, 30, 1).to(device)
+    src = torch.rand(60, 120, 1).to(device)
     tgt_in = torch.rand(10, 30, 1).to(device)
 
-    # out = model((src, tgt_in))
-    # print(f'output {out.shape}')
+    out = model(src)
+    print(out.shape)
 
+    # print(f'output {out.shape}')
     # print(f" Attention matrix: {model.encoder_attention(src)}")
-    model.decoder_attention((src, tgt_in))
 
 
 if __name__ == '__main__':
